@@ -11,9 +11,9 @@
   },
   "dependencies": {
     "@clerk/clerk-react": "^5.53.4",
+    "@tanstack/react-query": "^5.90.5",
     "react": "^19.1.1",
-    "react-dom": "^19.1.1",
-    "video-calling-interview": "file:.."
+    "react-dom": "^19.1.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.36.0",
