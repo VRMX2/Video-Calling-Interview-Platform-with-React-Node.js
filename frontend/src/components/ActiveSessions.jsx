@@ -1,360 +1,296 @@
-export const PROBLEMS = {
-  "two-sum": {
-    id: "two-sum",
-    title: "Two Sum",
-    difficulty: "Easy",
-    category: "Array • Hash Table",
-    description: {
-      text: "Given an array of integers nums and an integer target, return indices of the two numbers in the array such that they add up to target.",
-      notes: [
-        "You may assume that each input would have exactly one solution, and you may not use the same element twice.",
-        "You can return the answer in any order.",
-      ],
-    },
-    examples: [
-      {
-        input: "nums = [2,7,11,15], target = 9",
-        output: "[0,1]",
-        explanation: "Because nums[0] + nums[1] == 9, we return [0, 1].",
-      },
-      {
-        input: "nums = [3,2,4], target = 6",
-        output: "[1,2]",
-      },
-      {
-        input: "nums = [3,3], target = 6",
-        output: "[0,1]",
-      },
-    ],
-    constraints: [
-      "2 ≤ nums.length ≤ 10⁴",
-      "-10⁹ ≤ nums[i] ≤ 10⁹",
-      "-10⁹ ≤ target ≤ 10⁹",
-      "Only one valid answer exists",
-    ],
-    starterCode: {
-      javascript: `function twoSum(nums, target) {
-  // Write your solution here
-  
+import { useUser } from "@clerk/clerk-react";
+import { useEffect, useState } from "react";
+import { useNavigate, useParams } from "react-router";
+import { useEndSession, useJoinSession, useSessionById } from "../hooks/useSessions";
+import { PROBLEMS } from "../data/problems";
+import { executeCode } from "../lib/piston";
+import Navbar from "../components/Navbar";
+import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
+import { getDifficultyBadgeClass } from "../lib/utils";
+import { Loader2Icon, LogOutIcon, PhoneOffIcon } from "lucide-react";
+import CodeEditorPanel from "../components/CodeEditorPanel";
+import OutputPanel from "../components/OutputPanel";
+
+import useStreamClient from "../hooks/useStreamClient";
+import { StreamCall, StreamVideo } from "@stream-io/video-react-sdk";
+import VideoCallUI from "../components/VideoCallUI";
+
+function SessionPage() {
+  const navigate = useNavigate();
+  const { id } = useParams();
+  const { user } = useUser();
+  const [output, setOutput] = useState(null);
+  const [isRunning, setIsRunning] = useState(false);
+
+  const { data: sessionData, isLoading: loadingSession, refetch } = useSessionById(id);
+
+  const joinSessionMutation = useJoinSession();
+  const endSessionMutation = useEndSession();
+
+  const session = sessionData?.session;
+  const isHost = session?.host?.clerkId === user?.id;
+  const isParticipant = session?.participant?.clerkId === user?.id;
+
+  const { call, channel, chatClient, isInitializingCall, streamClient } = useStreamClient(
+    session,
+    loadingSession,
+    isHost,
+    isParticipant
+  );
+
+  // find the problem data based on session problem title
+  const problemData = session?.problem
+    ? Object.values(PROBLEMS).find((p) => p.title === session.problem)
+    : null;
+
+  const [selectedLanguage, setSelectedLanguage] = useState("javascript");
+  const [code, setCode] = useState(problemData?.starterCode?.[selectedLanguage] || "");
+
+  // auto-join session if user is not already a participant and not the host
+  useEffect(() => {
+    if (!session || !user || loadingSession) return;
+    if (isHost || isParticipant) return;
+
+    joinSessionMutation.mutate(id, { onSuccess: refetch });
+
+    // remove the joinSessionMutation, refetch from dependencies to avoid infinite loop
+  }, [session, user, loadingSession, isHost, isParticipant, id]);
+
+  // redirect the "participant" when session ends
+  useEffect(() => {
+    if (!session || loadingSession) return;
+
+    if (session.status === "completed") navigate("/dashboard");
+  }, [session, loadingSession, navigate]);
+
+  // update code when problem loads or changes
+  useEffect(() => {
+    if (problemData?.starterCode?.[selectedLanguage]) {
+      setCode(problemData.starterCode[selectedLanguage]);
+    }
+  }, [problemData, selectedLanguage]);
+
+  const handleLanguageChange = (e) => {
+    const newLang = e.target.value;
+    setSelectedLanguage(newLang);
+    // use problem-specific starter code
+    const starterCode = problemData?.starterCode?.[newLang] || "";
+    setCode(starterCode);
+    setOutput(null);
+  };
+
+  const handleRunCode = async () => {
+    setIsRunning(true);
+    setOutput(null);
+
+    const result = await executeCode(selectedLanguage, code);
+    setOutput(result);
+    setIsRunning(false);
+  };
+
+  const handleEndSession = () => {
+    if (confirm("Are you sure you want to end this session? All participants will be notified.")) {
+      // this will navigate the HOST to dashboard
+      endSessionMutation.mutate(id, { onSuccess: () => navigate("/dashboard") });
+    }
+  };
+
+  return (
+    <div className="h-screen bg-base-100 flex flex-col">
+      <Navbar />
+
+      <div className="flex-1">
+        <PanelGroup direction="horizontal">
+          {/* LEFT PANEL - CODE EDITOR & PROBLEM DETAILS */}
+          <Panel defaultSize={50} minSize={30}>
+            <PanelGroup direction="vertical">
+              {/* PROBLEM DSC PANEL */}
+              <Panel defaultSize={50} minSize={20}>
+                <div className="h-full overflow-y-auto bg-base-200">
+                  {/* HEADER SECTION */}
+                  <div className="p-6 bg-base-100 border-b border-base-300">
+                    <div className="flex items-start justify-between mb-3">
+                      <div>
+                        <h1 className="text-3xl font-bold text-base-content">
+                          {session?.problem || "Loading..."}
+                        </h1>
+                        {problemData?.category && (
+                          <p className="text-base-content/60 mt-1">{problemData.category}</p>
+                        )}
+                        <p className="text-base-content/60 mt-2">
+                          Host: {session?.host?.name || "Loading..."} •{" "}
+                          {session?.participant ? 2 : 1}/2 participants
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        <span
+                          className={`badge badge-lg ${getDifficultyBadgeClass(
+                            session?.difficulty
+                          )}`}
+                        >
+                          {session?.difficulty.slice(0, 1).toUpperCase() +
+                            session?.difficulty.slice(1) || "Easy"}
+                        </span>
+                        {isHost && session?.status === "active" && (
+                          <button
+                            onClick={handleEndSession}
+                            disabled={endSessionMutation.isPending}
+                            className="btn btn-error btn-sm gap-2"
+                          >
+                            {endSessionMutation.isPending ? (
+                              <Loader2Icon className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <LogOutIcon className="w-4 h-4" />
+                            )}
+                            End Session
+                          </button>
+                        )}
+                        {session?.status === "completed" && (
+                          <span className="badge badge-ghost badge-lg">Completed</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="p-6 space-y-6">
+                    {/* problem desc */}
+                    {problemData?.description && (
+                      <div className="bg-base-100 rounded-xl shadow-sm p-5 border border-base-300">
+                        <h2 className="text-xl font-bold mb-4 text-base-content">Description</h2>
+                        <div className="space-y-3 text-base leading-relaxed">
+                          <p className="text-base-content/90">{problemData.description.text}</p>
+                          {problemData.description.notes?.map((note, idx) => (
+                            <p key={idx} className="text-base-content/90">
+                              {note}
+                            </p>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* examples section */}
+                    {problemData?.examples && problemData.examples.length > 0 && (
+                      <div className="bg-base-100 rounded-xl shadow-sm p-5 border border-base-300">
+                        <h2 className="text-xl font-bold mb-4 text-base-content">Examples</h2>
+
+                        <div className="space-y-4">
+                          {problemData.examples.map((example, idx) => (
+                            <div key={idx}>
+                              <div className="flex items-center gap-2 mb-2">
+                                <span className="badge badge-sm">{idx + 1}</span>
+                                <p className="font-semibold text-base-content">Example {idx + 1}</p>
+                              </div>
+                              <div className="bg-base-200 rounded-lg p-4 font-mono text-sm space-y-1.5">
+                                <div className="flex gap-2">
+                                  <span className="text-primary font-bold min-w-[70px]">
+                                    Input:
+                                  </span>
+                                  <span>{example.input}</span>
+                                </div>
+                                <div className="flex gap-2">
+                                  <span className="text-secondary font-bold min-w-[70px]">
+                                    Output:
+                                  </span>
+                                  <span>{example.output}</span>
+                                </div>
+                                {example.explanation && (
+                                  <div className="pt-2 border-t border-base-300 mt-2">
+                                    <span className="text-base-content/60 font-sans text-xs">
+                                      <span className="font-semibold">Explanation:</span>{" "}
+                                      {example.explanation}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Constraints */}
+                    {problemData?.constraints && problemData.constraints.length > 0 && (
+                      <div className="bg-base-100 rounded-xl shadow-sm p-5 border border-base-300">
+                        <h2 className="text-xl font-bold mb-4 text-base-content">Constraints</h2>
+                        <ul className="space-y-2 text-base-content/90">
+                          {problemData.constraints.map((constraint, idx) => (
+                            <li key={idx} className="flex gap-2">
+                              <span className="text-primary">•</span>
+                              <code className="text-sm">{constraint}</code>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </Panel>
+
+              <PanelResizeHandle className="h-2 bg-base-300 hover:bg-primary transition-colors cursor-row-resize" />
+
+              <Panel defaultSize={50} minSize={20}>
+                <PanelGroup direction="vertical">
+                  <Panel defaultSize={70} minSize={30}>
+                    <CodeEditorPanel
+                      selectedLanguage={selectedLanguage}
+                      code={code}
+                      isRunning={isRunning}
+                      onLanguageChange={handleLanguageChange}
+                      onCodeChange={(value) => setCode(value)}
+                      onRunCode={handleRunCode}
+                    />
+                  </Panel>
+
+                  <PanelResizeHandle className="h-2 bg-base-300 hover:bg-primary transition-colors cursor-row-resize" />
+
+                  <Panel defaultSize={30} minSize={15}>
+                    <OutputPanel output={output} />
+                  </Panel>
+                </PanelGroup>
+              </Panel>
+            </PanelGroup>
+          </Panel>
+
+          <PanelResizeHandle className="w-2 bg-base-300 hover:bg-primary transition-colors cursor-col-resize" />
+
+          {/* RIGHT PANEL - VIDEO CALLS & CHAT */}
+          <Panel defaultSize={50} minSize={30}>
+            <div className="h-full bg-base-200 p-4 overflow-auto">
+              {isInitializingCall ? (
+                <div className="h-full flex items-center justify-center">
+                  <div className="text-center">
+                    <Loader2Icon className="w-12 h-12 mx-auto animate-spin text-primary mb-4" />
+                    <p className="text-lg">Connecting to video call...</p>
+                  </div>
+                </div>
+              ) : !streamClient || !call ? (
+                <div className="h-full flex items-center justify-center">
+                  <div className="card bg-base-100 shadow-xl max-w-md">
+                    <div className="card-body items-center text-center">
+                      <div className="w-24 h-24 bg-error/10 rounded-full flex items-center justify-center mb-4">
+                        <PhoneOffIcon className="w-12 h-12 text-error" />
+                      </div>
+                      <h2 className="card-title text-2xl">Connection Failed</h2>
+                      <p className="text-base-content/70">Unable to connect to the video call</p>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="h-full">
+                  <StreamVideo client={streamClient}>
+                    <StreamCall call={call}>
+                      <VideoCallUI chatClient={chatClient} channel={channel} />
+                    </StreamCall>
+                  </StreamVideo>
+                </div>
+              )}
+            </div>
+          </Panel>
+        </PanelGroup>
+      </div>
+    </div>
+  );
 }
 
-// Test cases
-console.log(twoSum([2, 7, 11, 15], 9)); // Expected: [0, 1]
-console.log(twoSum([3, 2, 4], 6)); // Expected: [1, 2]
-console.log(twoSum([3, 3], 6)); // Expected: [0, 1]`,
-      python: `def twoSum(nums, target):
-    # Write your solution here
-    pass
-
-# Test cases
-print(twoSum([2, 7, 11, 15], 9))  # Expected: [0, 1]
-print(twoSum([3, 2, 4], 6))  # Expected: [1, 2]
-print(twoSum([3, 3], 6))  # Expected: [0, 1]`,
-      java: `import java.util.*;
-
-class Solution {
-    public static int[] twoSum(int[] nums, int target) {
-        // Write your solution here
-        
-        return new int[0];
-    }
-    
-    public static void main(String[] args) {
-        System.out.println(Arrays.toString(twoSum(new int[]{2, 7, 11, 15}, 9))); // Expected: [0, 1]
-        System.out.println(Arrays.toString(twoSum(new int[]{3, 2, 4}, 6))); // Expected: [1, 2]
-        System.out.println(Arrays.toString(twoSum(new int[]{3, 3}, 6))); // Expected: [0, 1]
-    }
-}`,
-    },
-    expectedOutput: {
-      javascript: "[0,1]\n[1,2]\n[0,1]",
-      python: "[0, 1]\n[1, 2]\n[0, 1]",
-      java: "[0, 1]\n[1, 2]\n[0, 1]",
-    },
-  },
-
-  "reverse-string": {
-    id: "reverse-string",
-    title: "Reverse String",
-    difficulty: "Easy",
-    category: "String • Two Pointers",
-    description: {
-      text: "Write a function that reverses a string. The input string is given as an array of characters s.",
-      notes: ["You must do this by modifying the input array in-place with O(1) extra memory."],
-    },
-    examples: [
-      {
-        input: 's = ["h","e","l","l","o"]',
-        output: '["o","l","l","e","h"]',
-      },
-      {
-        input: 's = ["H","a","n","n","a","h"]',
-        output: '["h","a","n","n","a","H"]',
-      },
-    ],
-    constraints: ["1 ≤ s.length ≤ 10⁵", "s[i] is a printable ascii character"],
-    starterCode: {
-      javascript: `function reverseString(s) {
-  // Write your solution here
-  
-}
-
-// Test cases
-let test1 = ["h","e","l","l","o"];
-reverseString(test1);
-console.log(test1); // Expected: ["o","l","l","e","h"]
-
-let test2 = ["H","a","n","n","a","h"];
-reverseString(test2);
-console.log(test2); // Expected: ["h","a","n","n","a","H"]`,
-      python: `def reverseString(s):
-    # Write your solution here
-    pass
-
-# Test cases
-test1 = ["h","e","l","l","o"]
-reverseString(test1)
-print(test1)  # Expected: ["o","l","l","e","h"]
-
-test2 = ["H","a","n","n","a","h"]
-reverseString(test2)
-print(test2)  # Expected: ["h","a","n","n","a","H"]`,
-      java: `import java.util.*;
-
-class Solution {
-    public static void reverseString(char[] s) {
-        // Write your solution here
-        
-    }
-    
-    public static void main(String[] args) {
-        char[] test1 = {'h','e','l','l','o'};
-        reverseString(test1);
-        System.out.println(Arrays.toString(test1)); // Expected: [o, l, l, e, h]
-        
-        char[] test2 = {'H','a','n','n','a','h'};
-        reverseString(test2);
-        System.out.println(Arrays.toString(test2)); // Expected: [h, a, n, n, a, H]
-    }
-}`,
-    },
-    expectedOutput: {
-      javascript: '["o","l","l","e","h"]\n["h","a","n","n","a","H"]',
-      python: "['o', 'l', 'l', 'e', 'h']\n['h', 'a', 'n', 'n', 'a', 'H']",
-      java: "[o, l, l, e, h]\n[h, a, n, n, a, H]",
-    },
-  },
-
-  "valid-palindrome": {
-    id: "valid-palindrome",
-    title: "Valid Palindrome",
-    difficulty: "Easy",
-    category: "String • Two Pointers",
-    description: {
-      text: "A phrase is a palindrome if, after converting all uppercase letters into lowercase letters and removing all non-alphanumeric characters, it reads the same forward and backward. Alphanumeric characters include letters and numbers.",
-      notes: ["Given a string s, return true if it is a palindrome, or false otherwise."],
-    },
-    examples: [
-      {
-        input: 's = "A man, a plan, a canal: Panama"',
-        output: "true",
-        explanation: '"amanaplanacanalpanama" is a palindrome.',
-      },
-      {
-        input: 's = "race a car"',
-        output: "false",
-        explanation: '"raceacar" is not a palindrome.',
-      },
-      {
-        input: 's = " "',
-        output: "true",
-        explanation:
-          's is an empty string "" after removing non-alphanumeric characters. Since an empty string reads the same forward and backward, it is a palindrome.',
-      },
-    ],
-    constraints: ["1 ≤ s.length ≤ 2 * 10⁵", "s consists only of printable ASCII characters"],
-    starterCode: {
-      javascript: `function isPalindrome(s) {
-  // Write your solution here
-  
-}
-
-// Test cases
-console.log(isPalindrome("A man, a plan, a canal: Panama")); // Expected: true
-console.log(isPalindrome("race a car")); // Expected: false
-console.log(isPalindrome(" ")); // Expected: true`,
-      python: `def isPalindrome(s):
-    # Write your solution here
-    pass
-
-# Test cases
-print(isPalindrome("A man, a plan, a canal: Panama"))  # Expected: True
-print(isPalindrome("race a car"))  # Expected: False
-print(isPalindrome(" "))  # Expected: True`,
-      java: `class Solution {
-    public static boolean isPalindrome(String s) {
-        // Write your solution here
-        
-        return false;
-    }
-    
-    public static void main(String[] args) {
-        System.out.println(isPalindrome("A man, a plan, a canal: Panama")); // Expected: true
-        System.out.println(isPalindrome("race a car")); // Expected: false
-        System.out.println(isPalindrome(" ")); // Expected: true
-    }
-}`,
-    },
-    expectedOutput: {
-      javascript: "true\nfalse\ntrue",
-      python: "True\nFalse\nTrue",
-      java: "true\nfalse\ntrue",
-    },
-  },
-
-  "maximum-subarray": {
-    id: "maximum-subarray",
-    title: "Maximum Subarray",
-    difficulty: "Medium",
-    category: "Array • Dynamic Programming",
-    description: {
-      text: "Given an integer array nums, find the subarray with the largest sum, and return its sum.",
-      notes: [],
-    },
-    examples: [
-      {
-        input: "nums = [-2,1,-3,4,-1,2,1,-5,4]",
-        output: "6",
-        explanation: "The subarray [4,-1,2,1] has the largest sum 6.",
-      },
-      {
-        input: "nums = [1]",
-        output: "1",
-        explanation: "The subarray [1] has the largest sum 1.",
-      },
-      {
-        input: "nums = [5,4,-1,7,8]",
-        output: "23",
-        explanation: "The subarray [5,4,-1,7,8] has the largest sum 23.",
-      },
-    ],
-    constraints: ["1 ≤ nums.length ≤ 10⁵", "-10⁴ ≤ nums[i] ≤ 10⁴"],
-    starterCode: {
-      javascript: `function maxSubArray(nums) {
-  // Write your solution here
-  
-}
-
-// Test cases
-console.log(maxSubArray([-2,1,-3,4,-1,2,1,-5,4])); // Expected: 6
-console.log(maxSubArray([1])); // Expected: 1
-console.log(maxSubArray([5,4,-1,7,8])); // Expected: 23`,
-      python: `def maxSubArray(nums):
-    # Write your solution here
-    pass
-
-# Test cases
-print(maxSubArray([-2,1,-3,4,-1,2,1,-5,4]))  # Expected: 6
-print(maxSubArray([1]))  # Expected: 1
-print(maxSubArray([5,4,-1,7,8]))  # Expected: 23`,
-      java: `class Solution {
-    public static int maxSubArray(int[] nums) {
-        // Write your solution here
-        
-        return 0;
-    }
-    
-    public static void main(String[] args) {
-        System.out.println(maxSubArray(new int[]{-2,1,-3,4,-1,2,1,-5,4})); // Expected: 6
-        System.out.println(maxSubArray(new int[]{1})); // Expected: 1
-        System.out.println(maxSubArray(new int[]{5,4,-1,7,8})); // Expected: 23
-    }
-}`,
-    },
-    expectedOutput: {
-      javascript: "6\n1\n23",
-      python: "6\n1\n23",
-      java: "6\n1\n23",
-    },
-  },
-
-  "container-with-most-water": {
-    id: "container-with-most-water",
-    title: "Container With Most Water",
-    difficulty: "Medium",
-    category: "Array • Two Pointers",
-    description: {
-      text: "You are given an integer array height of length n. There are n vertical lines drawn such that the two endpoints of the ith line are (i, 0) and (i, height[i]).",
-      notes: [
-        "Find two lines that together with the x-axis form a container, such that the container contains the most water.",
-        "Return the maximum amount of water a container can store.",
-        "Notice that you may not slant the container.",
-      ],
-    },
-    examples: [
-      {
-        input: "height = [1,8,6,2,5,4,8,3,7]",
-        output: "49",
-        explanation:
-          "The vertical lines are represented by array [1,8,6,2,5,4,8,3,7]. In this case, the max area of water the container can contain is 49.",
-      },
-      {
-        input: "height = [1,1]",
-        output: "1",
-      },
-    ],
-    constraints: ["n == height.length", "2 ≤ n ≤ 10⁵", "0 ≤ height[i] ≤ 10⁴"],
-    starterCode: {
-      javascript: `function maxArea(height) {
-  // Write your solution here
-  
-}
-
-// Test cases
-console.log(maxArea([1,8,6,2,5,4,8,3,7])); // Expected: 49
-console.log(maxArea([1,1])); // Expected: 1`,
-      python: `def maxArea(height):
-    # Write your solution here
-    pass
-
-# Test cases
-print(maxArea([1,8,6,2,5,4,8,3,7]))  # Expected: 49
-print(maxArea([1,1]))  # Expected: 1`,
-      java: `class Solution {
-    public static int maxArea(int[] height) {
-        // Write your solution here
-        
-        return 0;
-    }
-    
-    public static void main(String[] args) {
-        System.out.println(maxArea(new int[]{1,8,6,2,5,4,8,3,7})); // Expected: 49
-        System.out.println(maxArea(new int[]{1,1})); // Expected: 1
-    }
-}`,
-    },
-    expectedOutput: {
-      javascript: "49\n1",
-      python: "49\n1",
-      java: "49\n1",
-    },
-  },
-};
-
-export const LANGUAGE_CONFIG = {
-  javascript: {
-    name: "JavaScript",
-    icon: "/javascript.png",
-    monacoLang: "javascript",
-  },
-  python: {
-    name: "Python",
-    icon: "/python.png",
-    monacoLang: "python",
-  },
-  java: {
-    name: "Java",
-    icon: "/java.png",
-    monacoLang: "java",
-  },
-};
+export default SessionPage;
