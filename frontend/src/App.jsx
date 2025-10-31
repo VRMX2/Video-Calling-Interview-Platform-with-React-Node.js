@@ -5,7 +5,7 @@ function App() {
   return (
     <>
     <h1>hello and welcome to my app </h1>
-    <SignInButton />
+    <SignInButton mode="modal"/>
     </>
   )
 }
