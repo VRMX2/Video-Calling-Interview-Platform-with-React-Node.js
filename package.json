@@ -1,0 +1,21 @@
+{
+  "name": "video-calling-interview",
+  "version": "1.0.0",
+  "description": "\"# Video-Calling-Interview-Platform-with-React-Node.js\"",
+  "main": "index.js",
+  "scripts": {
+	"build": "npm install --prefix backend && npm install --prefix frontend && npm run build --prefix frontend",
+    "start": "npm run start --prefix backend"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/VRMX2/Video-Calling-Interview-Platform-with-React-Node.js.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/VRMX2/Video-Calling-Interview-Platform-with-React-Node.js/issues"
+  },
+  "homepage": "https://github.com/VRMX2/Video-Calling-Interview-Platform-with-React-Node.js#readme"
+}
